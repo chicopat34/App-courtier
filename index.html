@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App Courtier SOFRACO</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a0e1a; color: #e8e4d9; font-family: Georgia, serif; }
+    input, button { font-family: Georgia, serif; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0a0e1a; }
+    ::-webkit-scrollbar-thumb { background: #2a3a5c; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useCallback } = React;
+
+    const CRITERES = [
+      { id: "ij", label: "Indemnités Journalières" },
+      { id: "invalidite", label: "Invalidité" },
+      { id: "deces", label: "Décès / PTIA" },
+      { id: "carence", label: "Délais de carence" },
+      { id: "exclusions", label: "Exclusions" },
+      { id: "souscription", label: "Conditions de souscription" },
+      { id: "options", label: "Options disponibles" },
+    ];
+
+    const PROFILS = ["Médecin", "Chirurgien-dentiste", "Infirmier(e)", "Kinésithérapeute", "Avocat", "Expert-comptable", "Artisan", "Commerçant", "Autre TNS"];
+    const BESOINS = ["Protection IJ forte", "Invalidité partielle", "Délai de carence court", "Capital décès élevé", "Peu d'exclusions", "Tarif compétitif"];
+
+    function App() {
+      const [apiKey, setApiKey] = useState("");
+      const [apiKeyValidated, setApiKeyValidated] = useState(false);
+      const [files, setFiles] = useState([]);
+      const [profil, setProfil] = useState({ nom: "", profession: "", age: "", revenu: "", genre: "", maternite: false, besoins: [] });
+      const [results, setResults] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState("");
+      const [dragging, setDragging] = useState(false);
+
+      const s = {
+        page: { minHeight: "100vh", background: "#0a0e1a" },
+        header: { background: "linear-gradient(135deg, #0d1530, #1a2444)", borderBottom: "1px solid #2a3a5c", padding: "24px 32px" },
+        headerSub: { fontSize: "11px", letterSpacing: "4px", color: "#7a9cc4", textTransform: "uppercase", marginBottom: "6px" },
+        headerTitle: { fontSize: "24px", fontWeight: "400", color: "#d4c9a8" },
+        main: { maxWidth: "1000px", margin: "0 auto", padding: "32px 20px" },
+        card: { background: "#0f1828", border: "1px solid #2a3a5c", borderRadius: "12px", padding: "28px", marginBottom: "20px" },
+        cardTitle: { fontSize: "17px", fontWeight: "400", color: "#d4c9a8", marginBottom: "16px" },
+        label: { display: "block", fontSize: "11px", letterSpacing: "2px", color: "#7a9cc4", textTransform: "uppercase", marginBottom: "8px" },
+        input: { width: "100%", background: "#0a0e1a", border: "1px solid #2a3a5c", borderRadius: "8px", padding: "10px 14px", color: "#e8e4d9", fontSize: "14px", outline: "none" },
+        btnGold: { background: "#c4a862", color: "#0a0e1a", border: "none", borderRadius: "8px", padding: "11px 24px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" },
+        btnOutline: (active) => ({ padding: "8px 16px", borderRadius: "20px", cursor: "pointer", border: `1px solid ${active ? "#c4a862" : "#2a3a5c"}`, background: active ? "#2a1e08" : "transparent", color: active ? "#c4a862" : "#7a9cc4", fontSize: "13px" }),
+        btnBlue: (active) => ({ padding: "8px 16px", borderRadius: "20px", cursor: "pointer", border: `1px solid ${active ? "#7a9cc4" : "#2a3a5c"}`, background: active ? "#1a2444" : "transparent", color: active ? "#7a9cc4" : "#4a6a8c", fontSize: "13px" }),
+        btnGender: (active) => ({ padding: "10px 28px", borderRadius: "20px", cursor: "pointer", border: `1px solid ${active ? "#c4a862" : "#2a3a5c"}`, background: active ? "#2a1e08" : "transparent", color: active ? "#c4a862" : "#7a9cc4", fontSize: "14px" }),
+        noteColor: (n) => n >= 7.5 ? "#2ecc71" : n >= 5 ? "#f39c12" : "#e74c3c",
+      };
+
+      const handleDrop = useCallback((e) => {
+        e.preventDefault();
+        setDragging(false);
+        const dropped = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith(".pdf"));
+        if (dropped.length) setFiles(prev => [...prev, ...dropped].slice(0, 10));
+      }, []);
+
+      const openFilePicker = () => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".pdf,application/pdf";
+        input.multiple = true;
+        input.onchange = (e) => {
+          const selected = Array.from(e.target.files).filter(f => f.name.endsWith(".pdf"));
+          if (selected.length) { setFiles(prev => [...prev, ...selected].slice(0, 10)); setError(""); }
+        };
+        document.body.appendChild(input);
+        input.click();
+        document.body.removeChild(input);
+      };
+
+      const fileToBase64 = (file) => new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(",")[1]);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+
+      const analyzeFiles = async () => {
+        if (!files.length || !profil.profession) { setError("Merci d'ajouter au moins un PDF et de sélectionner une profession."); return; }
+        setLoading(true); setError(""); setResults(null);
+        try {
+          const analyses = [];
+          for (const file of files) {
+            const base64 = await fileToBase64(file);
+            const prompt = `Tu es un expert en prévoyance TNS et courtier en assurance. Analyse cette notice/CG.
+Profil client : Profession: ${profil.profession}, Âge: ${profil.age||"N/A"}, Genre: ${profil.genre||"N/A"}, Revenu: ${profil.revenu||"N/A"}€, Maternité: ${profil.genre==="Femme"&&profil.maternite?"Oui":"Non"}, Besoins: ${profil.besoins.join(", ")||"N/A"}
+Réponds UNIQUEMENT en JSON valide sans markdown:
+{"compagnie":"...","produit":"...","note_globale":0,"adequation_profil":0,"criteres":{"ij":{"detail":"...","points_forts":["..."],"points_faibles":["..."],"note":0},"invalidite":{"detail":"...","points_forts":["..."],"points_faibles":["..."],"note":0},"deces":{"detail":"...","points_forts":["..."],"points_faibles":["..."],"note":0},"carence":{"detail":"...","points_forts":["..."],"points_faibles":["..."],"note":0},"exclusions":{"detail":"...","points_forts":["..."],"points_faibles":["..."],"note":0},"souscription":{"detail":"...","points_forts":["..."],"points_faibles":["..."],"note":0},"options":{"detail":"...","points_forts":["..."],"points_faibles":["..."],"note":0}},"recommandation":"...","verdict":"recommande"}`;
+
+            const response = await fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+              body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, messages: [{ role: "user", content: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }, { type: "text", text: prompt }] }] })
+            });
+            if (!response.ok) { const err = await response.json(); throw new Error(err.error?.message || "Erreur API"); }
+            const data = await response.json();
+            const text = data.content.map(b => b.text || "").join("");
+            const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+            analyses.push({ ...parsed, filename: file.name });
+          }
+          analyses.sort((a, b) => b.note_globale - a.note_globale);
+          setResults(analyses);
+        } catch (e) { setError("Erreur : " + e.message); }
+        finally { setLoading(false); }
+      };
+
+      const getVerdict = (v) => ({
+        recommande: { bg: "#1a3a2a", border: "#2ecc71", color: "#2ecc71", label: "✓ Recommandé" },
+        neutre: { bg: "#2a2a1a", border: "#f39c12", color: "#f39c12", label: "~ Neutre" },
+        deconseille: { bg: "#3a1a1a", border: "#e74c3c", color: "#e74c3c", label: "✗ Déconseillé" },
+      }[v] || { bg: "#1a2444", border: "#7a9cc4", color: "#7a9cc4", label: "~ Neutre" });
+
+      return (
+        <div style={s.page}>
+          <div style={s.header}>
+            <div style={s.headerSub}>SOFRACO · Outil Courtier</div>
+            <h1 style={s.headerTitle}>Analyseur Prévoyance TNS</h1>
+          </div>
+          <div style={s.main}>
+
+            {/* Clé API */}
+            {!apiKeyValidated && (
+              <div style={s.card}>
+                <h2 style={s.cardTitle}>🔑 Clé API Anthropic</h2>
+                <p style={{ color: "#7a9cc4", fontSize: "13px", marginBottom: "16px" }}>Saisie une seule fois par session — jamais stockée.</p>
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <input type="password" placeholder="sk-ant-..." value={apiKey} onChange={e => setApiKey(e.target.value)} style={s.input} />
+                  <button style={s.btnGold} onClick={() => apiKey.startsWith("sk-ant-") ? setApiKeyValidated(true) : setError("Clé invalide")}>Valider</button>
+                </div>
+                {error && <p style={{ color: "#e74c3c", fontSize: "13px", marginTop: "10px" }}>⚠️ {error}</p>}
+              </div>
+            )}
+
+            {apiKeyValidated && (
+              <>
+                {/* Profil client */}
+                <div style={s.card}>
+                  <h2 style={s.cardTitle}>👤 Profil Client</h2>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px", marginBottom: "16px" }}>
+                    {[{k:"nom",l:"Nom",p:"Dupont Marie"},{k:"age",l:"Âge",p:"42"},{k:"revenu",l:"Revenu annuel (€)",p:"60000"}].map(({k,l,p}) => (
+                      <div key={k}>
+                        <label style={s.label}>{l}</label>
+                        <input style={s.input} placeholder={p} value={profil[k]} onChange={e => setProfil(pr => ({...pr,[k]:e.target.value}))} />
+                      </div>
+                    ))}
+                  </div>
+
+                  <label style={s.label}>Genre</label>
+                  <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
+                    {["Homme","Femme"].map(g => (
+                      <button key={g} style={s.btnGender(profil.genre===g)} onClick={() => setProfil(p => ({...p, genre:g, maternite: g==="Homme"?false:p.maternite}))}>
+                        {g==="Homme"?"👨 Homme":"👩 Femme"}
+                      </button>
+                    ))}
+                  </div>
+
+                  {profil.genre==="Femme" && (
+                    <div style={{ marginBottom: "16px" }}>
+                      <button onClick={() => setProfil(p => ({...p, maternite:!p.maternite}))} style={{ display:"flex", alignItems:"center", gap:"10px", background: profil.maternite?"#1a2a1a":"transparent", border:`1px solid ${profil.maternite?"#2ecc71":"#2a3a5c"}`, borderRadius:"10px", padding:"10px 18px", cursor:"pointer", color: profil.maternite?"#2ecc71":"#7a9cc4", fontSize:"13px" }}>
+                        <span style={{ width:"16px", height:"16px", borderRadius:"3px", border:`2px solid ${profil.maternite?"#2ecc71":"#4a6a8c"}`, background: profil.maternite?"#2ecc71":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"11px", color:"#0a0e1a", flexShrink:0 }}>{profil.maternite?"✓":""}</span>
+                        🤱 Couverture maternité / prime de naissance
+                      </button>
+                    </div>
+                  )}
+
+                  <label style={s.label}>Profession</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "16px" }}>
+                    {PROFILS.map(p => <button key={p} style={s.btnOutline(profil.profession===p)} onClick={() => setProfil(pr => ({...pr,profession:p}))}>{p}</button>)}
+                  </div>
+
+                  <label style={s.label}>Besoins prioritaires</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                    {BESOINS.map(b => <button key={b} style={s.btnBlue(profil.besoins.includes(b))} onClick={() => setProfil(p => ({...p, besoins: p.besoins.includes(b)?p.besoins.filter(x=>x!==b):[...p.besoins,b]}))}>{b}</button>)}
+                  </div>
+                </div>
+
+                {/* Upload PDFs */}
+                <div style={s.card}>
+                  <h2 style={s.cardTitle}>📄 Notices / CG des Compagnies</h2>
+                  <p style={{ color: "#7a9cc4", fontSize: "13px", marginBottom: "16px" }}>Maximum 10 PDFs · Prévoyance TNS</p>
+                  <div onDrop={handleDrop} onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)}
+                    style={{ border:`2px dashed ${dragging?"#c4a862":"#2a3a5c"}`, borderRadius:"10px", padding:"32px", textAlign:"center", background: dragging?"#1a1808":"transparent", marginBottom:"14px" }}>
+                    <div style={{ fontSize:"32px", marginBottom:"10px" }}>📂</div>
+                    <p style={{ color:"#7a9cc4", fontSize:"14px", marginBottom:"14px" }}>Glissez vos PDFs ici ou cliquez le bouton</p>
+                    <button style={s.btnGold} onClick={openFilePicker}>📎 Sélectionner des PDFs</button>
+                  </div>
+                  {files.map((f,i) => (
+                    <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:"#0a0e1a", border:"1px solid #2a3a5c", borderRadius:"8px", padding:"10px 14px", marginBottom:"6px" }}>
+                      <span style={{ color:"#d4c9a8", fontSize:"14px" }}>📄 {f.name}</span>
+                      <span style={{ color:"#4a6a8c", fontSize:"12px", margin:"0 12px" }}>{(f.size/1024).toFixed(0)} Ko</span>
+                      <button onClick={() => setFiles(prev=>prev.filter((_,j)=>j!==i))} style={{ background:"none", border:"none", color:"#e74c3c", cursor:"pointer", fontSize:"18px" }}>×</button>
+                    </div>
+                  ))}
+                </div>
+
+                {error && <div style={{ background:"#2a0808", border:"1px solid #e74c3c", borderRadius:"8px", padding:"12px 16px", marginBottom:"16px", color:"#e74c3c", fontSize:"14px" }}>⚠️ {error}</div>}
+
+                <button onClick={analyzeFiles} disabled={loading||!files.length} style={{ width:"100%", padding:"16px", background: loading||!files.length?"#1e2d4a":"linear-gradient(135deg,#c4a862,#a8884a)", border:"none", borderRadius:"10px", color: loading||!files.length?"#4a6a8c":"#0a0e1a", fontSize:"15px", fontWeight:"bold", cursor: loading||!files.length?"not-allowed":"pointer", marginBottom:"32px" }}>
+                  {loading ? "⏳ Analyse en cours..." : `🔍 Analyser ${files.length} notice${files.length>1?"s":""}`}
+                </button>
+
+                {/* Résultats */}
+                {results && (
+                  <div>
+                    <h2 style={{ fontSize:"20px", fontWeight:"400", color:"#d4c9a8", marginBottom:"6px" }}>📊 Résultats</h2>
+                    <p style={{ color:"#7a9cc4", fontSize:"13px", marginBottom:"24px" }}>{results.length} compagnie{results.length>1?"s":""} · Triées par note</p>
+
+                    {results.length >= 2 && (
+                      <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(results.length,3)},1fr)`, gap:"14px", marginBottom:"28px" }}>
+                        {results.slice(0,3).map((r,i) => {
+                          const v = getVerdict(r.verdict);
+                          return (
+                            <div key={i} style={{ background: i===0?"linear-gradient(135deg,#1a1808,#2a2010)":"#0f1828", border:`2px solid ${i===0?"#c4a862":"#2a3a5c"}`, borderRadius:"12px", padding:"20px", textAlign:"center", position:"relative" }}>
+                              {i===0 && <div style={{ position:"absolute", top:"-11px", left:"50%", transform:"translateX(-50%)", background:"#c4a862", color:"#0a0e1a", fontSize:"10px", fontWeight:"bold", padding:"3px 10px", borderRadius:"20px" }}>MEILLEUR CHOIX</div>}
+                              <div style={{ fontSize:"26px", fontWeight:"bold", color:s.noteColor(r.note_globale) }}>{r.note_globale.toFixed(1)}<span style={{ fontSize:"13px", color:"#4a6a8c" }}>/10</span></div>
+                              <div style={{ fontSize:"15px", color:"#d4c9a8", margin:"4px 0 2px" }}>{r.compagnie}</div>
+                              <div style={{ fontSize:"11px", color:"#7a9cc4", marginBottom:"10px" }}>{r.produit}</div>
+                              <div style={{ display:"inline-block", background:v.bg, border:`1px solid ${v.border}`, color:v.color, padding:"3px 10px", borderRadius:"20px", fontSize:"11px" }}>{v.label}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {results.map((r,i) => (
+                      <div key={i} style={{ background:"#0f1828", border:`1px solid ${i===0?"#c4a862":"#2a3a5c"}`, borderRadius:"12px", padding:"24px", marginBottom:"16px" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"16px" }}>
+                          <div>
+                            <div style={{ fontSize:"18px", color:"#d4c9a8" }}>{["🥇","🥈","🥉"][i]||"📋"} {r.compagnie}</div>
+                            <div style={{ fontSize:"12px", color:"#7a9cc4" }}>{r.produit} · {r.filename}</div>
+                          </div>
+                          <div style={{ textAlign:"right" }}>
+                            <div style={{ fontSize:"28px", fontWeight:"bold", color:s.noteColor(r.note_globale) }}>{r.note_globale.toFixed(1)}</div>
+                            <div style={{ fontSize:"11px", color:"#4a6a8c" }}>note globale</div>
+                            <div style={{ fontSize:"12px", color:"#7a9cc4" }}>Profil : <span style={{ color:s.noteColor(r.adequation_profil) }}>{r.adequation_profil.toFixed(1)}/10</span></div>
+                          </div>
+                        </div>
+
+                        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px", marginBottom:"16px" }}>
+                          {CRITERES.map(({id,label}) => {
+                            const c = r.criteres[id]; if (!c) return null;
+                            return (
+                              <div key={id} style={{ background:"#0a0e1a", borderRadius:"8px", padding:"12px", border:"1px solid #1a2a3c" }}>
+                                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"6px" }}>
+                                  <span style={{ fontSize:"12px", color:"#d4c9a8", fontWeight:"bold" }}>{label}</span>
+                                  <span style={{ fontSize:"13px", fontWeight:"bold", color:s.noteColor(c.note) }}>{c.note}/10</span>
+                                </div>
+                                <p style={{ fontSize:"11px", color:"#7a9cc4", lineHeight:"1.5", marginBottom:"6px" }}>{c.detail}</p>
+                                {c.points_forts?.filter(Boolean).map((pt,j) => <div key={j} style={{ fontSize:"11px", color:"#2ecc71" }}>✓ {pt}</div>)}
+                                {c.points_faibles?.filter(Boolean).map((pt,j) => <div key={j} style={{ fontSize:"11px", color:"#e74c3c" }}>✗ {pt}</div>)}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div style={{ background:"#0a1520", border:"1px solid #2a3a5c", borderRadius:"8px", padding:"14px" }}>
+                          <div style={{ fontSize:"10px", letterSpacing:"2px", color:"#7a9cc4", textTransform:"uppercase", marginBottom:"6px" }}>Recommandation</div>
+                          <p style={{ fontSize:"13px", color:"#d4c9a8", lineHeight:"1.6" }}>{r.recommandation}</p>
+                        </div>
+                      </div>
+                    ))}
+
+                    <button onClick={() => { setResults(null); setFiles([]); }} style={{ background:"transparent", border:"1px solid #2a3a5c", borderRadius:"8px", padding:"10px 22px", color:"#7a9cc4", cursor:"pointer", fontSize:"13px" }}>
+                      ↩ Nouvelle analyse
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
